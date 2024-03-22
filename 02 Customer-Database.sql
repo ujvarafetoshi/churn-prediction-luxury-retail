@@ -1,0 +1,380 @@
+-- CREATE A TABLE TO STORE CURRENT CUSTOMER DATA
+CREATE TABLE CUSTOMER_TABLE_CURRENT AS
+SELECT * FROM (
+    SELECT DISTINCT(S.IDCUSTOMER), C.* EXCLUDE IDCUSTOMER
+    FROM DATA_PREP.MASTER_SALES_ITEM_CUSTOMER_STORE S
+    LEFT JOIN SANDBOX.DIM_CUSTOMER C
+    ON S.CODECUSTOMER = C.CUSTOMERCODE
+    WHERE S.IDCUSTOMER IS NOT NULL AND S.IDCUSTOMER <> '1-0'
+);
+
+-- CREATE A TABLE TO STORE CURRENT CUSTOMER DATA WITH ORIGIN INFORMATION
+CREATE TABLE M_CURRENT_CUSTOMER_WITH_ORIGIN AS
+SELECT C.*, S.STORE_COUNTRY_CODE AS ORIGIN_COUNTRY, S.STORE_CITY AS ORIGIN_CITY
+FROM CUSTOMER_TABLE_CURRENT C
+LEFT JOIN SANDBOX.DIM_STORE S
+ON C.CODESTORE = S.STORE_CODE;
+
+-- QUALITY CHECK TO SEE THE LATEST DAY OF SALE UPTO 2024
+SELECT 'FACT SALES LINES' AS NAME,
+        MAX(DAYOFSALE) 
+    FROM 
+        DATA_ACCESS.DATA_SOURCE.FACT_SALES_LINES
+    WHERE 
+        YEAR(DAYOFSALE) <> 2025
+UNION
+SELECT 'MASTER ALL' AS NAME, 
+        MAX(DAYOFSALE) 
+    FROM 
+        NEW_MASTER_ALL_TABLE
+    WHERE 
+        YEAR(DAYOFSALE) <> 2025
+UNION
+SELECT 'MASTER SALES ITEM CUSTOMER STORE' AS NAME,
+        MAX(DAYOFSALE) 
+    FROM 
+        team_1.data_prep.master_sales_item_customer_store
+    WHERE 
+        YEAR(DAYOFSALE) <> 2025;
+
+-- DROP THE CURRENT CUSTOMER TABLE IF EXISTS AND CREATE A NEW ONE
+DROP TABLE IF EXISTS CUSTOMER_TABLE_CURRENT;
+CREATE TABLE CUSTOMER_TABLE_CURRENT AS
+SELECT * 
+    FROM 
+        (SELECT DISTINCT(S.IDCUSTOMER),
+                C.* EXCLUDE IDCUSTOMER
+            FROM DATA_PREP.MASTER_SALES_ITEM_CUSTOMER_STORE S
+        LEFT JOIN 
+            DATA_ACCESS.DATA_SOURCE.DIM_CUSTOMER C
+        ON S.IDCUSTOMER = C.IDCUSTOMER 
+        WHERE S.IDCUSTOMER IS NOT NULL AND S.IDCUSTOMER <> '1-0'
+);
+
+-- DROP THE TABLE IF EXISTS AND CREATE A NEW ONE FOR CURRENT CUSTOMER DATA WITH ORIGIN
+DROP TABLE IF EXISTS TEAM_1.DATA_PREP.M_CURRENT_CUSTOMER_WITH_ORIGIN;
+CREATE TABLE TEAM_1.DATA_PREP.M_CURRENT_CUSTOMER_WITH_ORIGIN AS
+-- CALCULATE ORIGIN COUNTRY & ORIGIN CITY BASED ON FIRST PURCHASE
+SELECT C.*,
+       S.STORE_COUNTRY_CODE AS ORIGIN_COUNTRY,
+       S.STORE_CITY AS ORIGIN_CITY 
+FROM CUSTOMER_TABLE_CURRENT AS C
+LEFT JOIN DATA_ACCESS.DATA_SOURCE.DIM_STORE AS S
+ON C.CODESTORE = S.STORE_CODE;
+
+-- QUALITY CHECK FOR DISTINCT IDCUSTOMER AND ORIGINAL PRICES
+SELECT 'CURRENT_CUSTOMER_WITH_ORIGIN' AS TABLE_NAME, 
+        COUNT(*), 
+        COUNT(DISTINCT IDCUSTOMER)
+FROM TEAM_1.DATA_PREP.M_CURRENT_CUSTOMER_WITH_ORIGIN;
+
+-- CREATE A TABLE FOR CUSTOMER DATA WITH ORIGIN, GENDER, AND SEGMENTATION
+DROP TABLE IF EXISTS TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER;
+CREATE TABLE TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER AS
+SELECT
+    CUST.idcustomer_source,
+    CUST.idcustomer,
+    CUST.brandname,
+    CUST.customercode,
+    CUST.codestore AS first_store_purchased,
+    CUST.email_exists,
+    CUST.email_optin,
+    CUST.email_bounce_code,
+    CUST.email_reachable,
+    CUST.mobile_exists,
+    CUST.mobile_optin,
+    CUST.mobile_bounce_code,
+    CUST.mobile_reachable,
+    CUST.customer_system_of_origin,
+    CUST.distinct_idcustomer_source_count,
+    CUST.origin_country,
+    CUST.origin_city,
+    GENDER.salutation,
+    GENDER.gender
+FROM
+    (
+        SELECT *
+        FROM TEAM_1.DATA_PREP.M_CURRENT_CUSTOMER_WITH_ORIGIN
+    ) CUST
+LEFT JOIN (
+    SELECT *
+    FROM TEAM_1.DATA_PREP.GENDER_CUSTOMER
+) GENDER ON CUST.idcustomer = GENDER.idcustomer;
+
+-- CREATE A TABLE FOR CUSTOMER DATA WITH ORIGIN, GENDER, SEGMENTATION, AND TOUCHPOINTS
+DROP TABLE IF EXISTS TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_SEGMENTATION;
+CREATE TABLE TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_SEGMENTATION AS
+SELECT
+    CUST.*,
+    H23_sale_count,
+    E23_sale_count,
+    H22_sale_count,
+    E22_sale_count,
+    H21_sale_count,
+    E21_sale_count,
+    H20_sale_count,
+    E20_sale_count,
+    CASE
+        WHEN H23_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_H23_sale_count,
+    CASE
+        WHEN E23_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_E23_sale_count,
+    CASE
+        WHEN H22_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_H22_sale_count,
+    CASE
+        WHEN E22_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_E22_sale_count,
+    CASE
+        WHEN H21_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_H21_sale_count,
+    CASE
+        WHEN E21_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_E21_sale_count,
+    CASE
+        WHEN H20_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_H20_sale_count,
+    CASE
+        WHEN E20_sale_count > 0 THEN '1'
+        ELSE '0'
+    END AS bin_E20_sale_count,
+    NVL(seg_sm1, '-') AS seg_sm1,
+    NVL(seg_sm2, '-') AS seg_sm2,
+    NVL(seg_sm3, '-') AS seg_sm3,
+    NVL(seg_sm4, '-') AS seg_sm4,
+    NVL(customer_source_subchannel, '-') AS customer_source_subchannel,
+    NVL(customer_source_channel, '-') AS customer_source_channel,
+    NVL(bar_seg_sm1, 'NA') AS bar_seg_sm1,
+    NVL(bar_seg_sm2, 'NA') AS bar_seg_sm2,
+    NVL(bar_seg_sm3, 'NA') AS bar_seg_sm3,
+    NVL(bar_seg_sm4, 'NA') AS bar_seg_sm4,
+    NVL(dynamic_curt_seg, '-') AS dynamic_curt_seg,
+    NVL(sandro_client_seg, '-') AS sandro_client_seg
+FROM
+    (
+        SELECT *
+        FROM TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER
+    ) AS CUST
+LEFT JOIN (
+    SELECT *
+    FROM TEAM_1.DATA_PREP.SALES_PIVOT
+) SALES_PIVOT ON CUST.idcustomer = SALES_PIVOT.idcustomer
+LEFT JOIN (
+    WITH t1 AS (
+        SELECT ROW_NUMBER() OVER(
+            ORDER BY bar_seg_sm1
+        ) AS rownum, *
+        FROM (
+            SELECT DISTINCT d1.bar_seg_sm1
+            FROM DATA_ACCESS.DATA_SOURCE.DIM_CUSTOMER_SEGMENTATION d1
+            WHERE bar_seg_sm1 LIKE '%(1'
+            OR bar_seg_sm1 LIKE '%(0'
+            ORDER BY bar_seg_sm1 DESC
+        )
+    ),
+    t2 AS (
+        SELECT ROW_NUMBER() OVER(
+            ORDER BY bar_seg_sm1
+        ) AS rownum, *
+        FROM (
+            SELECT DISTINCT bar_seg_sm1
+            FROM DATA_ACCESS.DATA_SOURCE.DIM_CUSTOMER_SEGMENTATION d2
+            WHERE bar_seg_sm1 LIKE '%(%)'
+            ORDER BY bar_seg_sm1 DESC
+        )
+    ),
+    bar_seg_mapping AS (
+        SELECT t1.bar_seg_sm1 AS false_segmentation,
+               t2.bar_seg_sm1 AS Correct
+        FROM t1
+        INNER JOIN t2 ON t1.rownum = t2.rownum
+    )
+    SELECT SEG.idcustomer,
+           customercode,
+           seg_sm1,
+           seg_sm2,
+           seg_sm3,
+           seg_sm4,
+           customer_source_subchannel,
+           customer_source_channel,
+           COALESCE(map1.correct, bar_seg_sm1) AS bar_seg_sm1,
+           COALESCE(map2.correct, bar_seg_sm2) AS bar_seg_sm2,
+           COALESCE(map3.correct, bar_seg_sm3) AS bar_seg_sm3,
+           COALESCE(map4.correct, bar_seg_sm4) AS bar_seg_sm4,
+           dynamic_curt_seg,
+           sandro_client_seg
+    FROM (
+        SELECT *
+        FROM DATA_ACCESS.DATA_SOURCE.dim_customer_segmentation
+        WHERE customercode != 'NULL'
+        AND seg_sm1 IS NOT NULL
+        AND seg_sm1 != 'NA'
+    ) AS SEG
+    LEFT JOIN bar_seg_mapping AS MAP1 ON SEG.bar_seg_sm1 = MAP1.false_segmentation
+    LEFT JOIN bar_seg_mapping AS MAP2 ON SEG.bar_seg_sm2 = MAP2.false_segmentation
+    LEFT JOIN bar_seg_mapping AS MAP3 ON SEG.bar_seg_sm3 = MAP3.false_segmentation
+    LEFT JOIN bar_seg_mapping AS MAP4 ON SEG.bar_seg_sm4 = MAP4.false_segmentation
+) SEG ON CUST.idcustomer = SEG.idcustomer
+;
+
+-- CREATE A TABLE FOR CUSTOMER DATA WITH ORIGIN, GENDER, SEGMENTATION, TOUCHPOINTS, AND UPDATED SEGMENTATION
+DROP TABLE IF EXISTS TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_SEGMENTATION_TOUCHPOINTS;
+CREATE TABLE TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_SEGMENTATION_TOUCHPOINTS AS
+WITH updated_segmentation AS (
+    SELECT *, (bin_h23_sale_count + bin_e23_sale_count + bin_h22_sale_count + bin_e22_sale_count) AS h23_e22_bin_sum,
+           (bin_h21_sale_count + bin_e21_sale_count + bin_h20_sale_count + bin_e20_sale_count) AS h21_e20_bin_sum
+    FROM TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_SEGMENTATION_TOUCHPOINTS
+)
+SELECT *,
+       CASE
+           WHEN (h23_e22_bin_sum >= 3 AND h23_sale_count >= 2)
+               OR (h23_e22_bin_sum = 4) THEN 'ADDICT'
+           WHEN ((h23_e22_bin_sum = 3 AND h23_sale_count < 2) OR (h23_e22_bin_sum = 2 AND bin_h23_sale_count = 1)) THEN 'LOYAL'
+           WHEN ((h21_e20_bin_sum = 0) AND (h23_e22_bin_sum = 1) AND (bin_h23_sale_count = 1 OR bin_e23_sale_count = 1)) THEN 'NEW'
+           WHEN h23_e22_bin_sum = 0 THEN 'LOST'
+           WHEN ((bin_h23_sale_count = 0 AND h23_e22_bin_sum = 2) OR (h23_e22_bin_sum = 1)) THEN 'IRREGULAR'
+           ELSE '-'
+       END AS recreated_sandro_client_seg
+FROM updated_segmentation
+;
+
+-- CREATE A TABLE FOR MASTER CUSTOMER DATA
+DROP TABLE IF EXISTS TEAM_1.DATA_PREP.MASTER_CUSTOMER_DATA;
+CREATE TABLE TEAM_1.DATA_PREP.MASTER_CUSTOMER_DATA AS
+SELECT
+    IDCUSTOMER_SOURCE,
+    A.IDCUSTOMER,
+    SUBSTRING(FIRST_STORE_PURCHASED,1,100) AS FIRST_STORE_PURCHASED,
+    BB.E23_LAST_STORE_PURCHASED,
+    CC.H22_LAST_STORE_PURCHASED,
+    DD.E22_LAST_STORE_PURCHASED,
+    EMAIL_EXISTS,
+    EMAIL_OPTIN,
+    EMAIL_BOUNCE_CODE,
+    EMAIL_REACHABLE,
+    MOBILE_EXISTS,
+    MOBILE_OPTIN,
+    MOBILE_BOUNCE_CODE,
+    MOBILE_REACHABLE,
+    ORIGIN_COUNTRY,
+    ORIGIN_CITY,
+    CASE
+        WHEN ORIGIN_COUNTRY = 'FR' AND (STORE_CITY = 'PARIS' OR STORE_RETAIL_TYPE_LABEL = 'PARIS') THEN 'IDF'
+        WHEN ORIGIN_COUNTRY = 'FR' AND (STORE_CITY <> 'PARIS' AND STORE_RETAIL_TYPE_LABEL <> 'PARIS') THEN 'FR_PROVINCE'
+        WHEN ORIGIN_COUNTRY = 'GB' AND ((STORE_CITY = 'LONDON' OR STORE_CITY = 'LONDRES') OR STORE_RETAIL_TYPE_LABEL = 'LONDON') THEN 'LONDON'
+        WHEN ORIGIN_COUNTRY = 'GB' AND (STORE_CITY <> 'LONDON' AND STORE_CITY <> 'LONDRES' AND STORE_RETAIL_TYPE_LABEL <> 'LONDON') THEN 'GB_PROVINCE'
+        ELSE '-'
+    END AS ORIGIN_STORE_GEOGRAPHICAL_AREA,
+    SALUTATION,
+    GENDER,
+    H23_SALE_COUNT,
+    E23_SALE_COUNT,
+    H22_SALE_COUNT,
+    E22_SALE_COUNT,
+    H21_SALE_COUNT,
+    E21_SALE_COUNT,
+    H20_SALE_COUNT,
+    E20_SALE_COUNT,
+    BIN_H23_SALE_COUNT,
+    BIN_E23_SALE_COUNT,
+    BIN_H22_SALE_COUNT,
+    BIN_E22_SALE_COUNT,
+    BIN_H21_SALE_COUNT,
+    BIN_E21_SALE_COUNT,
+    BIN_H20_SALE_COUNT,
+    BIN_E20_SALE_COUNT,
+    CUSTOMER_SOURCE_SUBCHANNEL,
+    CUSTOMER_SOURCE_CHANNEL,
+    FIRST_TOUCH_POINT,
+    SECOND_TOUCH_POINT,
+    LAST_TOUCH_POINT,
+    C.SEASON_CODE AS LAST_TOUCH_POINT_SEASON_CODE,
+    DAYS_FROM_FIRST_TO_SECOND,
+    DAYS_FROM_FIRST_TO_LAST,
+    RECREATED_SANDRO_CLIENT_SEG
+FROM TEAM_1.DATA_PREP.CUSTOMER_WITH_ORIGIN_GENDER_UPDATED_SEGMENTATION_TOUCHPOINTS A
+LEFT JOIN (
+    SELECT DISTINCT STORE_GEOGRAPHICAL_AREA, STORE_CITY, STORE_COUNTRY_CODE, STORE_RETAIL_TYPE_LABEL
+    FROM DATA_ACCESS.DATA_SOURCE.DIM_STORE
+    WHERE STORE_GEOGRAPHICAL_AREA IS NOT NULL
+    AND STORE_COUNTRY_CODE IN ('FR', 'GB')
+    AND STORE_RETAIL_TYPE_LABEL <> 'OUTLETS'
+) B ON A.ORIGIN_CITY = B.STORE_CITY
+LEFT JOIN (
+    SELECT DISTINCT IDCUSTOMER, SUBSTRING(IDSTORE,3,20) AS E23_LAST_STORE_PURCHASED
+    FROM (
+        SELECT IDCUSTOMER, IDSTORE,
+               DENSE_RANK() OVER (PARTITION BY IDCUSTOMER ORDER BY MAX_DAYOFSALE, RANDOM() DESC) AS RANK_OF_PURCHASE
+        FROM (
+            SELECT DISTINCT IDCUSTOMER, IDSTORE,
+                   MAX(DAYOFSALE) AS MAX_DAYOFSALE
+            FROM TEAM_1.DATA_PREP.MASTER_SALES_ITEM_CUSTOMER_STORE
+            WHERE IDCUSTOMER <> '1-0'
+            AND YEAR(DAYOFSALE) <> '2025'
+            AND SEASON_CODE NOT IN ('H23', 'E24', 'H24', 'OO')
+            GROUP BY ALL
+        )
+        ORDER BY IDCUSTOMER, RANK_OF_PURCHASE
+    )
+    WHERE RANK_OF_PURCHASE = 1
+) BB ON A.IDCUSTOMER = BB.IDCUSTOMER
+LEFT JOIN (
+    SELECT DISTINCT IDCUSTOMER, SUBSTRING(IDSTORE,3,20) AS H22_LAST_STORE_PURCHASED
+    FROM (
+        SELECT IDCUSTOMER, IDSTORE,
+               DENSE_RANK() OVER (PARTITION BY IDCUSTOMER ORDER BY MAX_DAYOFSALE, RANDOM() DESC) AS RANK_OF_PURCHASE
+        FROM (
+            SELECT DISTINCT IDCUSTOMER, IDSTORE,
+                   MAX(DAYOFSALE) AS MAX_DAYOFSALE
+            FROM TEAM_1.DATA_PREP.MASTER_SALES_ITEM_CUSTOMER_STORE
+            WHERE IDCUSTOMER <> '1-0'
+            AND YEAR(DAYOFSALE) <> '2025'
+            AND SEASON_CODE NOT IN ('E23', 'H23', 'E24', 'H24', 'OO')
+            GROUP BY ALL
+        )
+        ORDER BY IDCUSTOMER, RANK_OF_PURCHASE
+    )
+    WHERE RANK_OF_PURCHASE = 1
+) CC ON A.IDCUSTOMER = CC.IDCUSTOMER
+LEFT JOIN (
+    SELECT DISTINCT IDCUSTOMER, SUBSTRING(IDSTORE,3,20) AS E22_LAST_STORE_PURCHASED
+    FROM (
+        SELECT IDCUSTOMER, IDSTORE,
+               DENSE_RANK() OVER (PARTITION BY IDCUSTOMER ORDER BY MAX_DAYOFSALE, RANDOM() DESC) AS RANK_OF_PURCHASE
+        FROM (
+            SELECT DISTINCT IDCUSTOMER, IDSTORE,
+                   MAX(DAYOFSALE) AS MAX_DAYOFSALE
+            FROM TEAM_1.DATA_PREP.MASTER_SALES_ITEM_CUSTOMER_STORE
+            WHERE IDCUSTOMER <> '1-0'
+            AND YEAR(DAYOFSALE) <> '2025'
+            AND SEASON_CODE NOT IN ('H22', 'E23', 'H23', 'E24', 'H24', 'OO')
+            GROUP BY ALL
+        )
+        ORDER BY IDCUSTOMER, RANK_OF_PURCHASE
+    )
+    WHERE RANK_OF_PURCHASE = 1
+) DD ON A.IDCUSTOMER = DD.IDCUSTOMER
+LEFT JOIN (
+    SELECT *
+    FROM DATA_ACCESS.DATA_SOURCE.DIM_SEASON
+) C ON SUBSTRING(A.LAST_TOUCH_POINT,1,4) || SUBSTRING(A.LAST_TOUCH_POINT, 6,2) || SUBSTRING(A.LAST_TOUCH_POINT, 9,2) >= IDCALENDAR_SEASON_START_DATE
+AND SUBSTRING(A.LAST_TOUCH_POINT,1,4) || SUBSTRING(A.LAST_TOUCH_POINT, 6,2) || SUBSTRING(A.LAST_TOUCH_POINT, 9,2) <= IDCALENDAR_SEASON_END_DATE
+;
+
+-- Check the count of records and distinct idcustomer in the master customer data
+SELECT COUNT(*), COUNT(DISTINCT IDCUSTOMER)
+FROM TEAM_1.DATA_PREP.MASTER_CUSTOMER_DATA;
+
+-- Check if there are any records with E23_SALE_COUNT > 0 but E23_LAST_STORE_PURCHASED is NULL
+SELECT *
+FROM TEAM_1.DATA_PREP.MASTER_CUSTOMER_DATA
+WHERE E23_SALE_COUNT > 0
+AND E23_LAST_STORE_PURCHASED IS NULL;
